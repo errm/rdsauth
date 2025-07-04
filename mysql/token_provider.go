@@ -141,7 +141,8 @@ func (ct *cachedToken) stale() bool {
 // while holding the cache's write lock.
 func (ct *cachedToken) updateToken(ctx context.Context, c *mysql.Config) error {
 	var err error
-	if ct.token, err = auth.BuildAuthToken(
+	var newToken string
+	if newToken, err = auth.BuildAuthToken(
 		ctx,
 		c.Addr,
 		ct.awsConfig.Region,
@@ -150,9 +151,18 @@ func (ct *cachedToken) updateToken(ctx context.Context, c *mysql.Config) error {
 	); err != nil {
 		return err
 	}
+	
+	// Parse expiry before updating the cached state to avoid inconsistency
+	newExpires, err := expiry(newToken)
+	if err != nil {
+		return err
+	}
+	
+	// Only update the cached state if both token generation and expiry parsing succeed
+	ct.token = newToken
+	ct.expires = newExpires
 	c.Passwd = ct.token
-	ct.expires, err = expiry(ct.token)
-	return err
+	return nil
 }
 
 // expiry parses the expiration time from an RDS authentication token.
