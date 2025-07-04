@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -313,5 +314,42 @@ func TestUpdateTokenExpiryParsingFailureFixed(t *testing.T) {
 	expectedStale := originalToken == "" || time.Now().After(originalExpires.Add(-ct.gracePeriod))
 	if ct.stale() != expectedStale {
 		t.Errorf("stale() returned unexpected result after failed update")
+	}
+}
+
+// Test potential integer overflow in expiry parsing
+func TestExpiryParsingIntegerOverflow(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		expectError bool
+	}{
+		{
+			name:        "very large expires value",
+			input:       "test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=999999999999999999999",
+			expectError: true, // Should fail to parse as int
+		},
+		{
+			name:        "maximum int value",
+			input:       fmt.Sprintf("test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=%d", int(^uint(0)>>1)),
+			expectError: false, // Should work but might cause time overflow
+		},
+		{
+			name:        "reasonable expire value",
+			input:       "test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=900",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := expiry(tc.input)
+			if tc.expectError && err == nil {
+				t.Error("expected error but got none")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("expected no error but got: %v", err)
+			}
+		})
 	}
 }
