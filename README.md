@@ -1,6 +1,7 @@
 # RDS IAM Token Authentication
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/errm/rdsauth.svg)](https://pkg.go.dev/github.com/errm/rdsauth)
+[![CI](https://github.com/errm/rdsauth/actions/workflows/ci.yaml/badge.svg)](https://github.com/errm/rdsauth/actions/workflows/ci.yaml)
 
 * RDS IAM authentication tokens are valid for 15 minutes.
 * IAM database authentication throttles connections at 200 new connections per second.
