@@ -147,6 +147,42 @@ func TestExpiryParsing(t *testing.T) {
 	}
 }
 
+func TestConcurrentTokenProvider(t *testing.T) {
+	mysqlConfig := mysql.Config{
+		Addr: "prod-instance.us-east-1.rds.amazonaws.com:3306",
+		User: "admin",
+	}
+	creds := &staticCredentials{"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "anExampleSessionToken"}
+	// grace period is larger than token expiry, so all tokens need to be refreshed right away -  I think this is the worst case scenario
+	tp := TokenProvider(aws.Config{Credentials: creds}, 16*time.Minute)
+
+	const goroutineCount = 1000
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutineCount)
+
+	// Run many goroutines to call the token provider concurrently
+	for i := 0; i < goroutineCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conf := mysqlConfig // copy
+			err := tp(context.Background(), &conf)
+			errs <- err
+			if conf.Passwd == "" {
+				t.Errorf("expected non-empty password")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+}
+
 type staticCredentials struct {
 	AccessKey, SecretKey, Session string
 }
