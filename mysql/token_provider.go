@@ -95,15 +95,28 @@ func TokenProvider(awsConfig aws.Config, gracePeriod time.Duration) func(ctx con
 // Returns:
 //   - error: If token generation fails
 func (ct *cachedToken) get(ctx context.Context, c *mysql.Config) error {
+	// First check with a read lock to see if we have a valid token
 	ct.mutex.RLock()
-	if ct.stale() {
-		ct.mutex.RUnlock()
-		return ct.updateToken(ctx, c)
-	} else {
+	if !ct.stale() {
+		defer ct.mutex.RUnlock()
 		c.Passwd = ct.token
-		ct.mutex.RUnlock()
+		return nil
 	}
-	return nil
+	ct.mutex.RUnlock()
+
+	// If we get here, we need to update the token
+	// Only one goroutine should be able to update the token at a time
+	ct.mutex.Lock()
+	defer ct.mutex.Unlock()
+
+	// Check again in case another goroutine already updated the token
+	if !ct.stale() {
+		c.Passwd = ct.token
+		return nil
+	}
+
+	// Update the token
+	return ct.updateToken(ctx, c)
 }
 
 // stale checks if the current token is expired or about to expire.
@@ -130,23 +143,17 @@ func (ct *cachedToken) stale() bool {
 // while holding the cache's write lock.
 func (ct *cachedToken) updateToken(ctx context.Context, c *mysql.Config) error {
 	var err error
-	ct.mutex.Lock()
-	defer ct.mutex.Unlock()
-	if ct.stale() {
-		if ct.token, err = auth.BuildAuthToken(
-			ctx,
-			c.Addr,
-			os.Getenv("AWS_REGION"),
-			c.User,
-			ct.awsConfig.Credentials,
-		); err != nil {
-			return err
-		}
-		c.Passwd = ct.token
-		if ct.expires, err = expiry(ct.token); err != nil {
-			return err
-		}
+	if ct.token, err = auth.BuildAuthToken(
+		ctx,
+		c.Addr,
+		os.Getenv("AWS_REGION"),
+		c.User,
+		ct.awsConfig.Credentials,
+	); err != nil {
+		return err
 	}
+	c.Passwd = ct.token
+	ct.expires, err = expiry(ct.token)
 	return err
 }
 
