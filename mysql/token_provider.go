@@ -26,7 +26,7 @@
 //	        mysqlConfig.Net = "tcp"
 //
 //	        // Register the token provider
-//	        mysqlCfg.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, 60*time.Second)))
+//	        mysqlCfg.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, time.Minute)))
 //
 //	        connector, _ := mysql.NewConnector(mysqlConfig)
 //
@@ -113,7 +113,7 @@ func (ct *cachedToken) get(ctx context.Context, c *mysql.Config) error {
 // Returns:
 //   - bool: true if the token is stale and should be refreshed
 func (ct *cachedToken) stale() bool {
-	return ct.token == "" || time.Now().After(ct.expires-ct.gracePeriod)
+	return ct.token == "" || time.Now().After(ct.expires.Add(-ct.gracePeriod))
 }
 
 // updateToken generates a new authentication token and updates the cache.

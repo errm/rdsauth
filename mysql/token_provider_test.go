@@ -17,7 +17,7 @@ func TestTokenProvider(t *testing.T) {
 		User: "admin",
 	}
 	creds := &staticCredentials{"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "anExampleSessionToken"}
-	tp := TokenProvider(aws.Config{Credentials: creds}, 60*time.Second)
+	tp := TokenProvider(aws.Config{Credentials: creds}, time.Minute)
 	err := tp(t.Context(), &mysqlConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -34,10 +34,11 @@ func TestExpiredToken(t *testing.T) {
 	}
 	creds := &staticCredentials{"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "anExampleSessionToken"}
 	ct := &cachedToken{
-		awsConfig: aws.Config{Credentials: creds},
-		mutex:     &sync.RWMutex{},
-		token:     "stale token",
-		expires:   time.Now().Add(-time.Second),
+		awsConfig:   aws.Config{Credentials: creds},
+		mutex:       &sync.RWMutex{},
+		token:       "stale token",
+		expires:     time.Now().Add(30 * time.Second),
+		gracePeriod: time.Minute,
 	}
 	err := ct.get(t.Context(), &mysqlConfig)
 	if err != nil {
@@ -46,10 +47,10 @@ func TestExpiredToken(t *testing.T) {
 	if mysqlConfig.Passwd == "stale token" {
 		t.Fatal("expected token refresh")
 	}
-	if !ct.expires.Before(time.Now().Add(15 * time.Minute)) {
+	if !ct.expires.Before(time.Now().Add(16 * time.Minute)) {
 		t.Fatal("expected expiry time to be refreshed")
 	}
-	if !ct.expires.After(time.Now().Add(13 * time.Minute)) {
+	if !ct.expires.After(time.Now().Add(14 * time.Minute)) {
 		t.Fatal("expected expiry time to be refreshed")
 	}
 }
@@ -93,7 +94,7 @@ func TestExpiryParsing(t *testing.T) {
 		{
 			name:     "token with valid time and expiry",
 			input:    "prod-instance.us-east-1.rds.amazonaws.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=900",
-			expected: time.Date(2025, time.July, 04, 10, 15, 38, 0, time.UTC),
+			expected: time.Date(2025, time.July, 04, 10, 16, 38, 0, time.UTC),
 		},
 		{
 			name:          "token missing expiry",
@@ -129,7 +130,7 @@ func TestExpiryParsing(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual, err := expiry(tc.input, 60*time.Second)
+			actual, err := expiry(tc.input)
 			if len(tc.expectedError) > 0 {
 				if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err)
