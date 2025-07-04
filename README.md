@@ -28,7 +28,7 @@ func main() {
         mysqlConfig.Net = "tcp"
 
         // Register the token provider
-        mysqlCfg.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, 60*time.Second)))
+        mysqlConfig.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, 60*time.Second)))
 
         connector, _ := mysql.NewConnector(mysqlConfig)
 

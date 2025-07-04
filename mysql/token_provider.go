@@ -26,7 +26,7 @@
 //	        mysqlConfig.Net = "tcp"
 //
 //	        // Register the token provider
-//	        mysqlCfg.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, time.Minute)))
+//	        mysqlConfig.Apply(mysql.BeforeConnect(rdsauth.TokenProvider(cfg, time.Minute)))
 //
 //	        connector, _ := mysql.NewConnector(mysqlConfig)
 //
