@@ -65,10 +65,9 @@ type cachedToken struct {
 }
 
 // TokenProvider creates a new AWS RDS authentication token provider function.
-// The returned function can be used as an AuthSwitchRequest handler in the MySQL driver.
 //
 // The token provider caches tokens until they are close to expiration (within the grace period),
-// reducing the number of calls to the AWS authentication service.
+// reducing the number of tokens that need to be generated, thus reducing throttling of new database connections.
 //
 // Parameters:
 //   - awsConfig: AWS configuration containing credentials and region information
