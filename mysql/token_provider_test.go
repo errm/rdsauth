@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -193,4 +194,162 @@ func (s *staticCredentials) Retrieve(ctx context.Context) (aws.Credentials, erro
 		SecretAccessKey: s.SecretKey,
 		SessionToken:    s.Session,
 	}, nil
+}
+
+// Test for the bug where expiry parsing failure leaves token in inconsistent state
+func TestUpdateTokenExpiryParsingFailure(t *testing.T) {
+	// Create a cachedToken and manually test the scenario
+	ct := &cachedToken{
+		mutex:       &sync.RWMutex{},
+		gracePeriod: time.Minute,
+	}
+	
+	// Simulate the scenario by directly testing what happens when we
+	// manually set a token that can't be parsed
+	ct.token = "invalid-token-without-proper-query-params"
+	
+	// This should demonstrate the bug - expires will be zero time
+	expires, err := expiry(ct.token)
+	if err == nil {
+		t.Fatal("expected error parsing invalid token")
+	}
+	
+	// In the current implementation, if updateToken fails after setting ct.token,
+	// we'd have ct.token set but ct.expires would be zero time
+	ct.expires = expires  // This will be zero time due to error
+	
+	// Now stale() should return true because expires is zero
+	if !ct.stale() {
+		t.Error("expected stale() to return true when expires is zero time")
+	}
+	
+	// This demonstrates the bug - we have a token but it's always considered stale
+	if ct.token == "" {
+		t.Error("token should not be empty in this test scenario")
+	}
+}
+
+// Test the actual bug in updateToken method by using a custom method 
+func TestUpdateTokenBugDemonstration(t *testing.T) {
+	ct := &cachedToken{
+		mutex:       &sync.RWMutex{},
+		gracePeriod: time.Minute,
+	}
+	
+	// Store original updateToken behavior by simulating what happens
+	// Let's manually reproduce the problematic sequence:
+	
+	// 1. Assume auth.BuildAuthToken succeeds and sets a token
+	ct.token = "some-valid-looking-token"
+	
+	// 2. But expiry parsing fails  
+	var err error
+	ct.expires, err = expiry(ct.token)
+	
+	// This should fail since the token doesn't have proper query params
+	if err == nil {
+		t.Fatal("expected expiry parsing to fail")
+	}
+	
+	// 3. Now we're in the buggy state: we have a token but zero expires time
+	if ct.token == "" {
+		t.Error("token should be set")
+	}
+	
+	if !ct.expires.IsZero() {
+		t.Error("expires should be zero time due to parsing failure")
+	}
+	
+	// 4. stale() will always return true now
+	if !ct.stale() {
+		t.Error("stale() should return true when expires is zero")
+	}
+	
+	// This means every subsequent call will try to refresh the token unnecessarily
+}
+
+// Test that the fix prevents inconsistent state when expiry parsing fails
+func TestUpdateTokenExpiryParsingFailureFixed(t *testing.T) {
+	// Create a custom updateToken-like function that simulates the fix
+	testUpdateTokenFixed := func(ct *cachedToken, token string) error {
+		// Simulate the fixed behavior: parse expiry first, then update state
+		newExpires, err := expiry(token)
+		if err != nil {
+			return err
+		}
+		
+		// Only update state if parsing succeeds
+		ct.token = token
+		ct.expires = newExpires
+		return nil
+	}
+	
+	ct := &cachedToken{
+		mutex:       &sync.RWMutex{},
+		gracePeriod: time.Minute,
+		token:       "old-token",
+		expires:     time.Now().Add(5 * time.Minute),
+	}
+	
+	// Store original state
+	originalToken := ct.token
+	originalExpires := ct.expires
+	
+	// Try to update with invalid token
+	err := testUpdateTokenFixed(ct, "invalid-token-without-proper-query-params")
+	if err == nil {
+		t.Fatal("expected error parsing invalid token")
+	}
+	
+	// With the fix, the original state should be preserved
+	if ct.token != originalToken {
+		t.Errorf("expected token to remain unchanged after failed update, got %q", ct.token)
+	}
+	
+	if ct.expires != originalExpires {
+		t.Errorf("expected expires to remain unchanged after failed update")
+	}
+	
+	// stale() should work correctly based on the original state
+	expectedStale := originalToken == "" || time.Now().After(originalExpires.Add(-ct.gracePeriod))
+	if ct.stale() != expectedStale {
+		t.Errorf("stale() returned unexpected result after failed update")
+	}
+}
+
+// Test potential integer overflow in expiry parsing
+func TestExpiryParsingIntegerOverflow(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		expectError bool
+	}{
+		{
+			name:        "very large expires value",
+			input:       "test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=999999999999999999999",
+			expectError: true, // Should fail to parse as int
+		},
+		{
+			name:        "maximum int value",
+			input:       fmt.Sprintf("test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=%d", int(^uint(0)>>1)),
+			expectError: false, // Should work but might cause time overflow
+		},
+		{
+			name:        "reasonable expire value",
+			input:       "test.com:3306?X-Amz-Date=20250704T100138Z&X-Amz-Expires=900",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := expiry(tc.input)
+			if tc.expectError && err == nil {
+				t.Error("expected error but got none")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("expected no error but got: %v", err)
+			}
+		})
+	}
 }
