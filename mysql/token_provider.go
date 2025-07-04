@@ -44,7 +44,6 @@ import (
 	"context"
 	"errors"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -145,7 +144,7 @@ func (ct *cachedToken) updateToken(ctx context.Context, c *mysql.Config) error {
 	if ct.token, err = auth.BuildAuthToken(
 		ctx,
 		c.Addr,
-		os.Getenv("AWS_REGION"),
+		ct.awsConfig.Region,
 		c.User,
 		ct.awsConfig.Credentials,
 	); err != nil {
